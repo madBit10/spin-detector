@@ -28,7 +28,8 @@ Status: ⬜ pending · 🟡 in review · ✅ locked
 flowchart LR
     U[(Universe config<br/>50 US retailers<br/>calls 2015–2025)] --> TR[Transcripts<br/>Option A + Alpha Vantage]
     TR --> TT[(transcripts table)]
-    U -.-> F[Financials ⬜]
+    U --> F[Financials<br/>SEC companyfacts]
+    F --> FT[(fundamentals table)]
 ```
 
 ---
@@ -130,7 +131,48 @@ flowchart LR
     G -->|yes| S[(transcripts table)]
 ```
 
-### 2b. Financials ⬜ · 2c. Same-store sales + guidance ⬜ · 2d. Index membership + delisting reasons ⬜
+### 2b. Financials ✅ (locked 2026-10-20)
+
+**Decision:** SEC EDGAR **companyfacts** (XBRL) for the fundamentals: one request per company returns its full history.
+
+| Question | Decision |
+|---|---|
+| Source | SEC companyfacts. **Every value carries its own `filed` date** (point-in-time); filings are permanent, so bankrupt retailers are covered; ~50 requests + a few CIK lookups, free. Requires a `User-Agent` (name + email, from `.env`), ≤10 req/s |
+| Raw metrics | Net sales, cost of goods sold (COGS), inventory |
+| Derived metrics | **YoY** net sales growth (label + feature) · **gross margin** = (net sales − COGS) ÷ net sales (label + feature) · **inventory–sales spread** = inventory growth YoY − sales growth YoY (feature: unsold stock → markdowns next quarter) |
+| Why YoY | Retail is seasonal (Q4 holidays); quarter-over-quarter would show a fake collapse every Q1 |
+| Tag lists (try in order) | **Net sales:** `RevenueFromContractWithCustomerExcludingAssessedTax` → `SalesRevenueNet` → `Revenues` (⚠️ backup only, flagged: can include other revenue, e.g. Macy's credit-card income) · **COGS:** `CostOfGoodsAndServicesSold` → `CostOfRevenue` → `CostOfGoodsSold` · **Inventory:** `InventoryNet` → `InventoryFinishedGoods` |
+| Gross profit | **Always computed** (net sales − COGS); the `GrossProfit` tag is never used (Macy's stopped tagging it in 2018) |
+| Point-in-time | **First-reported** = earliest `filed` per (`start`, `end`), computed **across all tags of a metric** (Macy's Q1 2018 was first filed under the old tag) |
+| Periods | Identified by `start`/`end` only, never `fy`/`fp` (those describe the filing). Quarter = 80–100 days; inventory is an instant value on `end` |
+| Q4 | Use the **tagged** Q4 when present; otherwise **derive** annual − (Q1+Q2+Q3); cross-check when both exist (Macy's FY2018: 8,455M tagged vs 8,454M derived) and flag gaps beyond rounding. Derived Q4's `as_of` = 10-K filing date |
+| Missing values | **Mark missing + log a warning**: never skip silently, never crash the run. Missing-rate per metric reported |
+| Join to transcripts | For each (CIK, `end`): the matching call = the company's **first call within 60 days after `end`**; then cross-check the transcript's fiscal year/quarter label, flag disagreements |
+| Out of scope (v1) | Operating income (cost deleverage), same-store sales and guidance (not in XBRL → 2c) |
+
+**Known limitation:** retailers define COGS differently (some include occupancy/buying costs), so gross margin isn't comparable *across* companies. Acceptable: the model compares each company with **its own past** (YoY + within-company normalisation, Decision 8).
+
+**Open for Decision 4:** XBRL `filed` lags the earnings call (Macy's FY2018 10-K filed 2019-04-03, ~5 weeks after the Q4 call). Whether the call/press-release date or the filing date counts as "public" is decided there; safe default = filing date.
+
+**Evidence:** `notebooks/03_explore_sec_financials.ipynb` (Macy's: tag switch 2018, `Revenues` ≠ net sales from 2022, Q1 2018 four filings / one value, `GrossProfit` stops 2018, Q4 tagged, BBBY absent from `company_tickers.json`).
+
+```mermaid
+flowchart LR
+    U[(universe: CIK per company<br/>name search for delisted)] --> CF[SEC companyfacts<br/>1 request / company<br/>cached in data/raw/sec/]
+    CF --> T[tag lists per metric<br/>net sales · COGS · inventory]
+    T --> FR[first-reported across tags<br/>earliest filed per start/end]
+    FR --> Q4{Q4 tagged?}
+    Q4 -->|yes| QT[use tagged · cross-check]
+    Q4 -->|no| QD[derive annual − Q1..Q3<br/>as_of = 10-K filed]
+    QT --> D[derived metrics<br/>YoY growth · gross margin<br/>inventory–sales spread]
+    QD --> D
+    D --> M{missing?}
+    M -->|yes| W[mark missing + warn]
+    M -->|no| J[join to call:<br/>first call ≤60 days after end<br/>+ fiscal label cross-check]
+    J --> FT[(fundamentals table)]
+```
+
+### 2c. Same-store sales + guidance ⬜ · 2d. Index membership + delisting reasons ⬜
 Still to design.
 
 ---
