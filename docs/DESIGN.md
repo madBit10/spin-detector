@@ -26,7 +26,9 @@ Status: ⬜ pending · 🟡 in review · ✅ locked
 
 ```mermaid
 flowchart LR
-    U[(Universe config<br/>50 US retailers<br/>calls 2015–2025)] -.-> N[Decision 2: Data sources ⬜]
+    U[(Universe config<br/>50 US retailers<br/>calls 2015–2025)] --> TR[Transcripts<br/>Option A + Alpha Vantage]
+    TR --> TT[(transcripts table)]
+    U -.-> F[Financials ⬜]
 ```
 
 ---
@@ -92,11 +94,43 @@ flowchart TD
 
 ## 2. Data sources 🟡 (in review)
 
-**Progress as of 2026-10-19:**
-- Option A (`kurry/sp500_earnings_transcripts`) tested: covers companies **only while in the S&P 500** (BBBY ends 2018-04, KSS & M end 2021-02/03, Gap & JCP absent); ends 2025-05-15; `company_name` 27% missing (join on `symbol` + `company_id`); 0 duplicates; `year`/`quarter` are fiscal.
-- **Chose Path 2:** A alone misses the decline years. A second source is needed.
-- **Confounding rule:** the second source must be full call transcripts with Q&A (not 8-K press releases). Otherwise source correlates with label. One shared schema; `source` column kept but never used as a feature.
-- API Ninjas reviewed: Developer ($39) = last 5 years only, no speaker split → ruled out. Business ($99/mo) = full archive + speaker split + `is_qa` + CIK → if paid, use it as the **single source for all 50** (A = validation set). Never use its own sentiment/summary/guidance fields.
-- **Next:** test Alpha Vantage free tier (BBBY 2021Q2, GPS 2019Q2, a 2017 small cap, M 2018Q1 overlap) before spending $99. Still open: Business quota, items 2–4 (financials, same-store sales/guidance, index membership/delistings).
+### 2a. Earnings call transcripts ✅ (locked 2026-10-20)
+
+**Decision: free hybrid.** Option A (Hugging Face `kurry/sp500_earnings_transcripts`) for the calls it has; **Alpha Vantage** (`EARNINGS_CALL_TRANSCRIPT`, free tier) for everything it lacks.
+
+| Rule | Detail |
+|---|---|
+| Precedence | **Option A wins** when both sources have a call (already downloaded, zero quota). Alpha Vantage is requested only for missing (company, fiscal quarter) pairs |
+| What AV fills | Decliners after leaving the S&P 500, companies absent from A (e.g. Gap), small/mid caps, 2025 calls after A ends (2025-05-15) |
+| Quota plan | Free tier ~25 requests/day, 5/min → resumable downloader, cache-first, every raw response saved to `data/raw/alphavantage/`, never requested twice. Gap-fill ≈ 1,000 requests ≈ 6 weeks, run in the background while Phases 1–2 use data already on disk |
+| Upgrade path | After the gaps, keep downloading AV versions of A's calls (~80 more days). Once complete → switch to **single source (AV)** at zero cost, A becomes validation |
+| Join key | Both sources use **fiscal** year/quarter → join on (company, fiscal year, fiscal quarter); `date` = when the call became public |
+| Company identity | Key on **SEC CIK**, never ticker. AV files history under the company's **current** ticker (GPS 2019Q2 empty, GAP 2019Q2 returned) → request via a ticker-history map (Decision 5) |
+| Wrong-company guard | The company name must appear in the operator's opening line; a reused ticker otherwise imports another company's calls |
+| Shared schema | Both sources normalised to: `cik, symbol, fiscal_year, fiscal_quarter, call_date, segment_no, speaker, title, section (prepared/QA), text, source` |
+| Confounding guards | `source` column kept, **never a feature**; backtest reported per source; overlap calls scored from both sources: narrative scores must agree before mixing is trusted |
+| Forbidden fields | AV `sentiment` (and any vendor sentiment/summary): third-party, hindsight-leakage risk, replaces the project's own scoring |
+| Repo hygiene | `data/` and `.env` git-ignored; code is public, transcripts never are |
+
+**Evidence:** `notebooks/01_explore_transcripts.ipynb` (A's coverage: BBBY ends 2018-04, KSS/M end 2021-02/03, Gap/JCP absent, `company_name` 27% missing, 0 duplicates, ends 2025-05-15) and `notebooks/02_test_alphavantage.ipynb` (AV: BBBY 2021Q2, GAP 2019Q2, BGFV 2017Q2, M 2018Q1 all speaker-split with Q&A; Macy's overlap Jaccard 0.80 vs ~0.32 → same call, fiscal quarters).
+
+**Rejected:** API Ninjas Developer ($39: 5-year history only, no speaker split); API Ninjas Business ($99: not needed once AV free passed); 8-K press releases as a transcript source (no Q&A → source-label confounding; still useful for guidance and same-store sales, see 2c).
+
+```mermaid
+flowchart LR
+    U[(universe: 50 companies<br/>keyed on CIK)] --> Q{call in Option A?}
+    Q -->|yes| A[Option A<br/>HF dataset]
+    Q -->|no| T[ticker-history map<br/>→ current ticker]
+    T --> AV[Alpha Vantage API<br/>free, ≤25/day, cache-first]
+    AV --> RAW[(data/raw/alphavantage/)]
+    A --> N[normalise to shared schema<br/>+ source column]
+    RAW --> N
+    N --> G{company name in<br/>operator opening?}
+    G -->|no| X[reject: wrong company]
+    G -->|yes| S[(transcripts table)]
+```
+
+### 2b. Financials ⬜ · 2c. Same-store sales + guidance ⬜ · 2d. Index membership + delisting reasons ⬜
+Still to design.
 
 ---

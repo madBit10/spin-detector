@@ -1,3 +1,6 @@
 /env
+.env
+api-keys.txt
 .DS_Store
 CHANGES_MADE.md
+data/
