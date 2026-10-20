@@ -8,7 +8,7 @@ Status: ⬜ pending · 🟡 in review · ✅ locked
 | # | Decision | Status |
 |---|---|---|
 | 1 | Scope & universe | ✅ |
-| 2 | Data sources (transcripts, financials) | ⬜ |
+| 2 | Data sources (transcripts, financials) | 🟡 |
 | 3 | Label definition ("surprise") | ⬜ |
 | 4 | Leakage control | ⬜ |
 | 5 | Storage & data model (incl. Chroma vs pgvector) | ⬜ |
@@ -87,5 +87,16 @@ flowchart TD
     L -->|bankruptcy| P[final call = positive]
     L -->|acquired| D[final call dropped]
 ```
+
+---
+
+## 2. Data sources 🟡 (in review)
+
+**Progress as of 2026-10-19:**
+- Option A (`kurry/sp500_earnings_transcripts`) tested: covers companies **only while in the S&P 500** (BBBY ends 2018-04, KSS & M end 2021-02/03, Gap & JCP absent); ends 2025-05-15; `company_name` 27% missing (join on `symbol` + `company_id`); 0 duplicates; `year`/`quarter` are fiscal.
+- **Chose Path 2:** A alone misses the decline years. A second source is needed.
+- **Confounding rule:** the second source must be full call transcripts with Q&A (not 8-K press releases). Otherwise source correlates with label. One shared schema; `source` column kept but never used as a feature.
+- API Ninjas reviewed: Developer ($39) = last 5 years only, no speaker split → ruled out. Business ($99/mo) = full archive + speaker split + `is_qa` + CIK → if paid, use it as the **single source for all 50** (A = validation set). Never use its own sentiment/summary/guidance fields.
+- **Next:** test Alpha Vantage free tier (BBBY 2021Q2, GPS 2019Q2, a 2017 small cap, M 2018Q1 overlap) before spending $99. Still open: Business quota, items 2–4 (financials, same-store sales/guidance, index membership/delistings).
 
 ---
